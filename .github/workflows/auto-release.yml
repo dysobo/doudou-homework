@@ -1,0 +1,86 @@
+name: Auto Release on File Change
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '**/*.docx'
+      - '**/*.pdf'
+      - '**/*.xlsx'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed files
+        id: changed
+        run: |
+          echo "Finding changed .docx, .pdf, .xlsx files..."
+          git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -E '\.(docx|pdf|xlsx)$' > changed_files.txt || true
+          if [ -s changed_files.txt ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "Files changed:"
+            cat changed_files.txt
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "No target files changed"
+          fi
+
+      - name: Create Release Archive
+        if: steps.changed.outputs.has_changes == 'true'
+        run: |
+          # Get the date for versioning
+          DATE=$(date +%Y.%m.%d)
+          VERSION="$DATE-release"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          
+          # Find all docx/pdf/xlsx files in the repo
+          find . -name "*.docx" -o -name "*.pdf" -o -name "*.xlsx" | grep -v ".git" > all_files.txt
+          
+          if [ -s all_files.txt ]; then
+            # Create zip archive
+            zip -r homework-$DATE.zip $(cat all_files.txt)
+            echo "archive_name=homework-$DATE.zip" >> $GITHUB_OUTPUT
+            echo "Created archive: homework-$DATE.zip"
+            ls -lh homework-$DATE.zip
+          else
+            echo "No files to archive"
+            echo "archive_name=" >> $GITHUB_OUTPUT
+          fi
+        id: archive
+
+      - name: Create GitHub Release
+        if: steps.changed.outputs.has_changes == 'true' && steps.archive.outputs.archive_name != ''
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.archive.outputs.version }}
+          name: "📚 肉肉作业 - ${{ steps.archive.outputs.version }}"
+          body: |
+            ## 自动发布的作业文件
+            
+            **发布时间**: ${{ github.event.head_commit.timestamp }}
+            **提交者**: ${{ github.actor }}
+            
+            ### 本次变更
+            ${{ github.event.head_commit.message }}
+            
+            ### 文件列表
+            包含所有 .docx, .pdf, .xlsx 文件
+            
+            ---
+            🤖 此 Release 由 GitHub Actions 自动生成
+          files: ${{ steps.archive.outputs.archive_name }}
+          draft: false
+          prerelease: false
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
